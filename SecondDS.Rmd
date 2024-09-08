@@ -1,0 +1,62 @@
+```{r}
+pacman::p_load("here", "tidyverse", "DESeq2", "ashr", "EnhancedVolcano")
+```
+
+```{r}
+i_am("2024-daad-rnaseq-course-K10/SecondDS.Rmd")
+```
+
+```{r}
+counts <- read.table("C:/Users/uznaa/OneDrive/Документы/GitHub/2024-daad-rnaseq-course-K10/GSE223269_Raw_gene_counts_matrix.txt", header = TRUE, row.names = 1, sep = "\t")
+counts <- apply(counts, 2, as.numeric)
+```
+
+
+```{r}
+coldata <- data.frame(
+  sample_id = colnames(counts),
+  brain_region = factor(c("CeA", "BLA", "ACC", "BNST")),
+  phenotype = factor(c("phasic", "sustained")),
+  sex = factor(c("male", "female")),
+  time_point = factor(c("24_hours", "28_days"))
+)
+
+rownames(coldata) <- colnames(counts)
+```
+
+```{r}
+subset_data <- coldata[coldata$brain_region %in% c("CeA", "BLA", "ACC", "BNST"), ]
+```
+
+
+```{r}
+dds_subset <- DESeqDataSetFromMatrix(countData = counts[, rownames(subset_data)], 
+                                     colData = subset_data, 
+                                     design = ~ phenotype)
+dds_subset <- DESeq(dds_subset)
+res_phenotype <- results(dds_subset)
+
+```
+
+```{r}
+dds_subset <- DESeqDataSetFromMatrix(countData = counts[, rownames(subset_data)], 
+                                     colData = subset_data, 
+                                     design = ~ sex)
+dds_subset <- DESeq(dds_subset)
+res_sex <- results(dds_subset)
+```
+
+```{r}
+dds_subset <- DESeqDataSetFromMatrix(countData = counts[, rownames(subset_data)], 
+                                     colData = subset_data, 
+                                     design = ~time_point)
+dds_subset <- DESeq(dds_subset)
+res_time <- results(dds_subset)
+```
+
+```{r}
+plotMA(res_phenotype)
+plotMA(res_sex)
+plotMA(res_time)
+```
+
