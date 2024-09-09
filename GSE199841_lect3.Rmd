@@ -1,0 +1,73 @@
+```{r include = FALSE}
+#tidyverse_packages()
+
+#install.packages("devtools")
+#devtools::install_github("r-lib/conflicted")
+library(conflicted)
+
+### Bioconductor and CRAN libraries used
+library(tidyverse)
+library(readr)
+library(tidyr)
+library(stringr)
+#install.packages("BiocManager")
+#BiocManager::install("AnnotationHub")
+#BiocManager::install("ensembldb")
+library(AnnotationHub) # bioc
+#install.packages("restfulr")
+library(restfulr)
+library(ensembldb) # bioc
+library(RColorBrewer)
+
+#BiocManager::install("DESeq2")
+library(DESeq2)
+library(pheatmap) # R
+#BiocManager::install("DEGreport")
+#BiocManager::install("tximport")
+library(DEGreport) # bioc
+library(tximport) # bioc
+library(ggplot2) 
+library(ggrepel) #r
+library(knitr)
+
+library(ggplotify)#r
+library(writexl) #r
+
+#BiocManager::install("clusterProfiler")
+#BiocManager::install("org.Mm.eg.db")
+library(clusterProfiler) #bioc
+library(org.Mm.eg.db) # bioc
+
+ggplot2::theme_set(theme_light(base_size = 14))
+
+opts_chunk[["set"]](
+    cache = FALSE,
+    dev = c("png", "pdf"),
+    error = TRUE,
+    highlight = TRUE,
+    message = FALSE,
+    prompt = FALSE,
+    tidy = FALSE,
+    warning = FALSE)
+
+```
+```{r}
+counts_csv <- "GSE97356/raw_counts.csv"
+counts_raw <- read_csv(counts_csv)
+
+metadata_tsv <- "GSE97356/metadata.tsv"
+metadata <- read_tsv(metadata_tsv)
+str_replace_all(metadata[10,], c("ptsd: Past" = "past", "ptsd: Current" = "current", "ptsd: Never" = "control"))
+metadata <- t(metadata)
+#rownames(metadata)
+#colnames(counts_raw)
+print(which(counts_raw < 0, arr.ind = TRUE))
+
+```
+```{r}
+dds_file <- "GSE97356/dds.RDS"
+dds <- DESeqDataSetFromMatrix(countData = counts_raw, 
+                              colData = metadata, 
+                              design = ~Sample_group)
+
+```
