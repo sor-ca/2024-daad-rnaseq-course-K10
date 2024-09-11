@@ -57,8 +57,8 @@ counts_raw <- read.csv(counts_csv, row.names = 1)
 
 metadata_tsv <- "GSE97356/metadata.tsv"
 metadata <- read.csv(metadata_tsv, row.names = 1)
-str_replace_all(metadata[10,], c("ptsd: Past" = "past", "ptsd: Current" = "current", "ptsd: Never" = "control"))
 metadata <- t(metadata)
+#str_replace_all(metadata["Sample_group"], c("ptsd: Past" = "past", "ptsd: Current" = "current", "ptsd: Never" = "control"))
 ```
 ```{r}
 dds_file <- "GSE97356/dds.RDS"
@@ -102,53 +102,65 @@ comb_de_result_table <- function(results){
                padj = format(padj, scientific = TRUE, digits = 2))
     return(results)
 }
-#ddsTAA <- subset(dds, select = colData(dds)$experiment == "TAA")
-#ddsTAA <- subset(ddsTAA, select = colData(ddsTAA)$treatment == "HC" | colData(ddsTAA)$treatment == "CIR")
-#ddsTAA$treatment <- droplevels(ddsTAA$treatment)
-#ddsTAA$treatment <- relevel(ddsTAA$treatment, ref = "HC")
-#str_replace_all(dds$Sample_group, "past", "ptsd")
-#str_replace_all(dds$Sample_group, "current", "ptsd")
-#dds <- droplevels(dds$Sample_group)
-#dds <- relevel(dds$Sample_group, ref = "control")
-
-
+# return mean counts for a group of sample in a column
+get_counts_for_samples <- function(ctpm, samples, column_name){
+    tpm_counts <- ctpm %>%
+        #column_to_rownames("ID_REF") %>% 
+        dplyr::select(any_of(samples)) %>% 
+        rowMeans() %>%
+        as.data.frame() %>%
+        round(2) %>%
+        rownames_to_column("gene_id") 
+    
+    colnames(tpm_counts) <- c("gene_id", "tpm")
+    
+    tpm_counts <- tpm_counts %>% 
+        dplyr::mutate("{column_name}" := round(tpm, 2)) %>% 
+        dplyr::select(-tpm)
+    
+    return(tpm_counts)
+}
 
 
 #contrast <- c("treatment", "CIR", "HC")
-contrast <- c("Sample_group", "ptsd: Current", "ptsd: Never")
-#ddsTAA <- DESeq(ddsTAA)
+contrast <- c("Sample_group", "current", "never")
 
 #resTreatment <- results(dds, contrast = contrast, alpha = 0.05)
 res <- results(dds, contrast = contrast, alpha = 0.05)
+res <- data.frame(res)
 length(which(res$padj < 0.05))
+write_csv(res, "GSE97356/results.csv")
+
+
 
 # Add annotations
-res_significant <- dplyr::filter(data.frame(res), padj < 0.05) %>%  
-                        dplyr::filter(abs(log2FoldChange) > 1.5) %>% 
+res_significant <- dplyr::filter(res, padj < 0.05) %>%  
+                        #dplyr::filter(abs(log2FoldChange) > 1.5) %>% 
+                        dplyr::filter(abs(log2FoldChange) > 0.4) %>% 
                         comb_de_result_table()
 
 #write_csv(resTreatment_tb_significant, "../../03_outputs/T4.TAA_results.csv")
 
-samples_control <- metadata %>% rownames_to_column("Sample_id") %>% 
-         dplyr::filter(Sample_group == "ptsd: Never")  %>% pull(sample_id)
+samples_control <- as.data.frame(metadata) %>% rownames_to_column("Sample_id") %>% 
+         dplyr::filter(Sample_group == "never")  %>% pull(Sample_id)
 
 #counts_tpm$symbol <- NULL
 counts_control <- get_counts_for_samples(counts_raw, samples_control, "control_mean")
 
-samples_effect <- metadata %>% dplyr::filter(Sample_group == "ptsd: Current") %>% row.names() 
-counts_effect <- get_counts_for_samples(counts_tpm, samples_effect, "ptsd_mean")
+samples_effect <- as.data.frame(metadata) %>% dplyr::filter(Sample_group == "current") %>% row.names() 
+counts_effect <- get_counts_for_samples(counts_raw, samples_effect, "ptsd_mean")
 
 tpm_counts <- counts_effect %>% 
               left_join(counts_control,
-                        by = c(1 = 1))
+                        by = c("gene_id" = "gene_id"))
 
 res_significant <- res_significant %>% 
-          left_join(tpm_counts, by = c(1 = 1)) %>%
+          left_join(tpm_counts, by = c(1 = "gene_id")) %>%
           arrange(log2FoldChange)
 
 #write_xlsx(list(T4.TAA_results = resTreatment_tb_significant), "../../03_outputs/T4.DE_TAA.xlsx")
 
 # Separate into up and down-regulated gene sets
-sig_up <- rownames(res)[which(res$padj < 0.01 & res$log2FoldChange > 0)]
-sig_down <- rownames(res)[which(res$padj < 0.01 & res$log2FoldChange < 0)]
+sig_up <- rownames(res)[which(res$padj < 0.05 & res$log2FoldChange > 0)]
+sig_down <- rownames(res)[which(res$padj < 0.05 & res$log2FoldChange < 0)]
 ```
