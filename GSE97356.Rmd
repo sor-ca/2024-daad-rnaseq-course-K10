@@ -154,8 +154,10 @@ tpm_counts <- counts_effect %>%
               left_join(counts_control,
                         by = c("gene_id" = "gene_id"))
 
+res_significant <- rownames_to_column(res_significant, "gene_id")
+
 res_significant <- res_significant %>% 
-          left_join(tpm_counts, by = c(1 = "gene_id")) %>%
+          left_join(tpm_counts, by = c("gene_id" = "gene_id")) %>%
           arrange(log2FoldChange)
 
 #write_xlsx(list(T4.TAA_results = resTreatment_tb_significant), "../../03_outputs/T4.DE_TAA.xlsx")
