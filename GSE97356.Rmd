@@ -53,21 +53,102 @@ opts_chunk[["set"]](
 ```
 ```{r}
 counts_csv <- "GSE97356/raw_counts.csv"
-counts_raw <- read_csv(counts_csv)
+counts_raw <- read.csv(counts_csv, row.names = 1)
 
 metadata_tsv <- "GSE97356/metadata.tsv"
-metadata <- read_tsv(metadata_tsv)
+metadata <- read.csv(metadata_tsv, row.names = 1)
 str_replace_all(metadata[10,], c("ptsd: Past" = "past", "ptsd: Current" = "current", "ptsd: Never" = "control"))
 metadata <- t(metadata)
-#rownames(metadata)
-#colnames(counts_raw)
-print(which(counts_raw < 0, arr.ind = TRUE))
-
 ```
 ```{r}
 dds_file <- "GSE97356/dds.RDS"
 dds <- DESeqDataSetFromMatrix(countData = counts_raw, 
                               colData = metadata, 
                               design = ~Sample_group)
+keep <- rowMeans(counts(dds)) >= 100
+dds <- dds[keep, ]
 
+# Run DESeq2
+dds <- DESeq(dds)
+#saveRDS(dds, dds_file)
+```
+
+# Sample-level QC analysis 
+```{r include = FALSE}
+### Transform counts for data visualization (unsupervised analysis)
+rld_file <- "GSE97356/rld.RDS"
+rld <- vst(dds)
+#saveRDS(rld, rld_file)
+
+# we also need just a matrix of transformed counts
+rld_mat <- assay(rld)
+```
+# PCA
+```{r, fig.width = 10, fig.height = 10}
+plotPCA(rld, intgroup = c("Sample_group")) + 
+  geom_label_repel(aes(label = name)) + 
+  theme_bw()
+```
+# DE in TAA
+```{r}
+# get rid of excess precision
+comb_de_result_table <- function(results){
+    results <- results %>%
+        mutate(baseMean = round(baseMean, 2),
+               log2FoldChange = round(log2FoldChange, 2),
+               lfcSE = round(lfcSE, 2),
+               stat = round(stat, 2),
+               pvalue = format(pvalue, scientific = TRUE, digits = 2),
+               padj = format(padj, scientific = TRUE, digits = 2))
+    return(results)
+}
+#ddsTAA <- subset(dds, select = colData(dds)$experiment == "TAA")
+#ddsTAA <- subset(ddsTAA, select = colData(ddsTAA)$treatment == "HC" | colData(ddsTAA)$treatment == "CIR")
+#ddsTAA$treatment <- droplevels(ddsTAA$treatment)
+#ddsTAA$treatment <- relevel(ddsTAA$treatment, ref = "HC")
+#str_replace_all(dds$Sample_group, "past", "ptsd")
+#str_replace_all(dds$Sample_group, "current", "ptsd")
+#dds <- droplevels(dds$Sample_group)
+#dds <- relevel(dds$Sample_group, ref = "control")
+
+
+
+
+#contrast <- c("treatment", "CIR", "HC")
+contrast <- c("Sample_group", "ptsd: Current", "ptsd: Never")
+#ddsTAA <- DESeq(ddsTAA)
+
+#resTreatment <- results(dds, contrast = contrast, alpha = 0.05)
+res <- results(dds, contrast = contrast, alpha = 0.05)
+length(which(res$padj < 0.05))
+
+# Add annotations
+res_significant <- dplyr::filter(data.frame(res), padj < 0.05) %>%  
+                        dplyr::filter(abs(log2FoldChange) > 1.5) %>% 
+                        comb_de_result_table()
+
+#write_csv(resTreatment_tb_significant, "../../03_outputs/T4.TAA_results.csv")
+
+samples_control <- metadata %>% rownames_to_column("Sample_id") %>% 
+         dplyr::filter(Sample_group == "ptsd: Never")  %>% pull(sample_id)
+
+#counts_tpm$symbol <- NULL
+counts_control <- get_counts_for_samples(counts_raw, samples_control, "control_mean")
+
+samples_effect <- metadata %>% dplyr::filter(Sample_group == "ptsd: Current") %>% row.names() 
+counts_effect <- get_counts_for_samples(counts_tpm, samples_effect, "ptsd_mean")
+
+tpm_counts <- counts_effect %>% 
+              left_join(counts_control,
+                        by = c(1 = 1))
+
+res_significant <- res_significant %>% 
+          left_join(tpm_counts, by = c(1 = 1)) %>%
+          arrange(log2FoldChange)
+
+#write_xlsx(list(T4.TAA_results = resTreatment_tb_significant), "../../03_outputs/T4.DE_TAA.xlsx")
+
+# Separate into up and down-regulated gene sets
+sig_up <- rownames(res)[which(res$padj < 0.01 & res$log2FoldChange > 0)]
+sig_down <- rownames(res)[which(res$padj < 0.01 & res$log2FoldChange < 0)]
 ```
