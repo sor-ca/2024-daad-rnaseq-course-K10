@@ -1,0 +1,177 @@
+---
+title: "Differential expression of the GSE219208 DataSet"
+output: html_document
+date: "2024-09-10"
+editor_options: 
+  chunk_output_type: inline
+---
+
+## setup
+```{r}
+#install.packages("pacman")
+#install.packages("here")
+
+#getwd()
+
+pacman::p_load("here", "tidyverse", "DESeq2", "ashr", "maEndToEnd",  "EnhancedVolcano", "pd.mogene.2.0.st")
+i_am("111.Rmd")
+
+```
+
+```{r}
+#install.packages('BiocManager')
+#BiocManager::install('GEOquery')
+library("GEOquery")
+gse=getGEO(filename="metadata.txt")
+write.table(gse, file='metadata.txt')
+read.table("metadata.txt")
+
+```
+
+
+```{r}
+counts <- read.csv(here("counts.csv"), row.names = 1)
+metadata <- read.table("metadata.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+```
+
+
+
+```{r}
+coldata <- data.frame(
+  title = factor(c("corth2_S20", "corth3_S12", "corth4_S19", "corthwo2_S11", "corthwo3_S13", "corthwo4_S4", "cortl2_S14", "cortl3_S19", "cortl4_S13", "cortlwo2_S18", "cortlwo3_S6","cortlwo4_S2", "Ctl1_S8", "ctl3_S10", "	ctl4_S5", "cvh1_S21", "cvh2_S16", "cvh3_S14", "cvhwo1_S1", "cvl1_S18", "cvl2_S11", "	cvl4_S7", "cvlwo2_S1", "dexh2_S15", "dexh3_S20", "dexh4_S7", "dexhwo2_S12", "dexhwo3_S17", "dexhwo4_S5", "dexl1_S16", "dexl2_S15", "dexl3_S9", "dexlwo1_S22", "dexlwo2_S3", "dexlwo3_S21", "dvh1_S4", "dvh2_S8", "dvh4_S10", "	dvhwo4_S9", "dvl1_S3", "dvl2_S6", "dvl3_S2", "dvlwo3_S17")),
+  time..days..ch1 = factor(rep(c(3, 6), length.out = 43)),  # Adjust to 43 samples
+  treatment.ch1 = factor(rep(c("cort low3", "cort low6", "cort high3", "cort high6", 
+                               "control3", "cort vehicle high3", "cort vehicle low3", 
+                               "cort vehicle low6", "dex high3", "dex high6", "dex low3", 
+                               "dex low6", "dex vehicle high3", "dex vehicle low3", 
+                               "dex vehicle high6"), length.out = 43))
+)
+```
+
+
+```{r}
+
+rownames(coldata) <- coldata$title
+
+matching_samples <- intersect(colnames(counts), rownames(coldata))
+
+counts_subset <- counts[, matching_samples]
+subset_data <- coldata[matching_samples, ]
+
+print(dim(counts_subset))
+print(dim(subset_data))
+```
+```{r}
+
+dds_subset <- DESeqDataSetFromMatrix(
+  countData = counts_subset,
+  colData = subset_data,
+  design = ~ time..days..ch1
+)
+
+dds_subset <- DESeq(dds_subset)
+res_treatment <- results(dds_subset)
+```
+
+```{r}
+
+summary(res_treatment)
+
+res_treatment_ordered <- res_treatment[order(res_treatment$padj), ]
+
+head(res_treatment_ordered)
+```
+
+```{r}
+
+sig_genes <- res_treatment_ordered[
+  which(res_treatment_ordered$padj < 0.05 & abs(res_treatment_ordered$log2FoldChange) > 1), 
+]
+
+head(sig_genes)
+```
+
+##Volcano
+
+
+```{r}
+
+EnhancedVolcano(res_treatment,
+    lab = rownames(res_treatment),
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    pCutoff = 0.05,  
+    FCcutoff = 1,  
+    title = 'Volcano plot: Differential Expression',
+    subtitle = 'GSE219208',
+    xlab = 'Log2 Fold Change',
+    ylab = '-Log10 p-value'
+)
+```
+
+
+```{r}
+
+write.csv(as.data.frame(sig_genes), file = "significant_genes.csv")
+```
+
+
+##PCA
+```{r}
+
+vsd <- vst(dds_subset, blind=FALSE)
+
+plotPCA(vsd, intgroup=c("treatment.ch1"))
+
+```
+##heatmap
+```{r}
+
+if (!requireNamespace("pheatmap", quietly = TRUE)) {
+    install.packages("pheatmap")
+}
+```
+
+```{r}
+
+vsd <- vst(dds_subset, blind = FALSE)
+
+
+top_genes <- rownames(res_treatment_ordered)[1:43]
+
+
+normalized_counts <- assay(vsd)[top_genes, ]
+
+
+normalized_counts_scaled <- t(scale(t(normalized_counts)))
+```
+
+
+```{r}
+
+library(pheatmap)
+
+
+pheatmap(normalized_counts_scaled,
+         cluster_rows = TRUE, 
+         cluster_cols = TRUE,  
+         annotation_col = as.data.frame(coldata), 
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         main = "Heatmap of Top Differentially Expressed Genes")
+
+```
+##functional analysis
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
