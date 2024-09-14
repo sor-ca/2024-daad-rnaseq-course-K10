@@ -50,18 +50,21 @@ opts_chunk[["set"]](
     tidy = FALSE,
     warning = FALSE)
 
+#install.packages(pacman)
+pacman::p_load("ashr")
+
 ```
 ```{r}
 counts_csv <- "GSE97356/raw_counts.csv"
 counts_raw <- read.csv(counts_csv, row.names = 1)
 
-metadata_tsv <- "GSE97356/metadata.tsv"
+metadata_tsv <- "GSE97356/metadata.csv"
 metadata <- read.csv(metadata_tsv, row.names = 1)
 metadata <- t(metadata)
 #str_replace_all(metadata["Sample_group"], c("ptsd: Past" = "past", "ptsd: Current" = "current", "ptsd: Never" = "control"))
 ```
 ```{r}
-dds_file <- "GSE97356/dds.RDS"
+#dds_file <- "GSE97356/dds.RDS"
 dds <- DESeqDataSetFromMatrix(countData = counts_raw, 
                               colData = metadata, 
                               design = ~Sample_group)
@@ -78,18 +81,18 @@ dds <- DESeq(dds)
 ### Transform counts for data visualization (unsupervised analysis)
 rld_file <- "GSE97356/rld.RDS"
 rld <- vst(dds)
-#saveRDS(rld, rld_file)
+saveRDS(rld, rld_file)
 
 # we also need just a matrix of transformed counts
 rld_mat <- assay(rld)
 ```
 # PCA
 ```{r, fig.width = 10, fig.height = 10}
-plotPCA(rld, intgroup = c("Sample_group")) + 
+plotPCA(rld, intgroup = c("Sample_group"), ntop = 500) + 
   geom_label_repel(aes(label = name)) + 
   theme_bw()
 ```
-# DE in TAA
+# DE
 ```{r}
 # get rid of excess precision
 comb_de_result_table <- function(results){
@@ -105,7 +108,6 @@ comb_de_result_table <- function(results){
 # return mean counts for a group of sample in a column
 get_counts_for_samples <- function(ctpm, samples, column_name){
     tpm_counts <- ctpm %>%
-        #column_to_rownames("ID_REF") %>% 
         dplyr::select(any_of(samples)) %>% 
         rowMeans() %>%
         as.data.frame() %>%
@@ -123,46 +125,224 @@ get_counts_for_samples <- function(ctpm, samples, column_name){
 
 
 #contrast <- c("treatment", "CIR", "HC")
-contrast <- c("Sample_group", "current", "never")
+contrast_cn <- c("Sample_group", "current", "never")
+contrast_pn <- c("Sample_group", "past", "never")
+contrast_cp <- c("Sample_group", "current", "past")
 
 #resTreatment <- results(dds, contrast = contrast, alpha = 0.05)
-res <- results(dds, contrast = contrast, alpha = 0.05)
-res <- data.frame(res)
-length(which(res$padj < 0.05))
-write_csv(res, "GSE97356/results.csv")
+res_cn <- results(dds, contrast = contrast_cn, alpha = 0.05)  %>% as.data.frame()
+hist(res_cn$log2FoldChange, 100, main = "current/never log2FoldChange")
 
+res_pn <- results(dds, contrast = contrast_pn, alpha = 0.05)  %>% as.data.frame()
+hist(res_pn$log2FoldChange, 100,  main = "past/never log2FoldChange")
 
+res_cp <- results(dds, contrast = contrast_cp, alpha = 0.05)  %>% as.data.frame()
+hist(res_cp$log2FoldChange, 100, main = "current/past log2FoldChange")
 
 # Add annotations
-res_significant <- dplyr::filter(res, padj < 0.05) %>%  
+res_sign_cn <- dplyr::filter(res_cn, padj < 0.05) %>%  
                         #dplyr::filter(abs(log2FoldChange) > 1.5) %>% 
-                        dplyr::filter(abs(log2FoldChange) > 0.4) %>% 
-                        comb_de_result_table()
+                        dplyr::filter(abs(log2FoldChange) > 0.27) %>% 
+                        comb_de_result_table() %>%
+                        rownames_to_column("gene_id")
+res_sign_pn <- dplyr::filter(res_pn, padj < 0.05) %>%  
+                        #dplyr::filter(abs(log2FoldChange) > 1.5) %>% 
+                        dplyr::filter(abs(log2FoldChange) > 0.27) %>% 
+                        comb_de_result_table() %>%
+                        rownames_to_column("gene_id")
+res_sign_cp <- dplyr::filter(res_cp, padj < 0.05) %>%  
+                        #dplyr::filter(abs(log2FoldChange) > 1.5) %>% 
+                        dplyr::filter(abs(log2FoldChange) > 0.27) %>% 
+                        comb_de_result_table() %>%
+                        rownames_to_column("gene_id")
 
-#write_csv(resTreatment_tb_significant, "../../03_outputs/T4.TAA_results.csv")
-
-samples_control <- as.data.frame(metadata) %>% rownames_to_column("Sample_id") %>% 
+samples_never <- as.data.frame(metadata) %>% rownames_to_column("Sample_id") %>% 
          dplyr::filter(Sample_group == "never")  %>% pull(Sample_id)
+counts_never <- get_counts_for_samples(counts_raw, samples_never, "control_mean")
 
-#counts_tpm$symbol <- NULL
-counts_control <- get_counts_for_samples(counts_raw, samples_control, "control_mean")
+samples_current <- as.data.frame(metadata) %>% dplyr::filter(Sample_group == "current") %>% row.names() 
+counts_current <- get_counts_for_samples(counts_raw, samples_current, "current_ptsd_mean")
 
-samples_effect <- as.data.frame(metadata) %>% dplyr::filter(Sample_group == "current") %>% row.names() 
-counts_effect <- get_counts_for_samples(counts_raw, samples_effect, "ptsd_mean")
+samples_past <- as.data.frame(metadata) %>% dplyr::filter(Sample_group == "past") %>% row.names() 
+counts_past <- get_counts_for_samples(counts_raw, samples_past, "past_ptsd_mean")
 
-tpm_counts <- counts_effect %>% 
-              left_join(counts_control,
-                        by = c("gene_id" = "gene_id"))
-
-res_significant <- rownames_to_column(res_significant, "gene_id")
-
-res_significant <- res_significant %>% 
-          left_join(tpm_counts, by = c("gene_id" = "gene_id")) %>%
+tpm_counts_cn <- counts_current %>% 
+              left_join(counts_never, by = c("gene_id" = "gene_id"))
+res_sign_cn <- res_sign_cn %>% 
+          left_join(tpm_counts_cn, by = c("gene_id" = "gene_id")) %>%
           arrange(log2FoldChange)
 
-#write_xlsx(list(T4.TAA_results = resTreatment_tb_significant), "../../03_outputs/T4.DE_TAA.xlsx")
+tpm_counts_pn <- counts_past %>% 
+              left_join(counts_never, by = c("gene_id" = "gene_id"))
+res_sign_pn <- res_sign_pn %>% 
+          left_join(tpm_counts_pn, by = c("gene_id" = "gene_id")) %>%
+          arrange(log2FoldChange)
 
-# Separate into up and down-regulated gene sets
-sig_up <- rownames(res)[which(res$padj < 0.05 & res$log2FoldChange > 0)]
-sig_down <- rownames(res)[which(res$padj < 0.05 & res$log2FoldChange < 0)]
+tpm_counts_cp <- counts_current %>% 
+              left_join(counts_past, by = c("gene_id" = "gene_id"))
+res_sign_cp <- res_sign_cp %>% 
+          left_join(tpm_counts_cp, by = c("gene_id" = "gene_id")) %>%
+          arrange(log2FoldChange)
+```
+
+
+```{r}
+
+res_ashr_cn <- results(dds, contrast = c("Sample_group", "current", "never"))
+res_shrink_cn <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "current", "never"))
+
+res_sig_ashr_cn <- res_ashr_cn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
+res_shrink_sig_cn <- res_shrink_cn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
+
+#hist(res_shrink$log2FoldChange, 100)
+```
+```{r, fig.width = 10, fig.height = 10}
+# Create a matrix of normalized expression
+sig_up_cn <- res_sign_cn[which(res_sign_cn$log2FoldChange > 0), ] %>% arrange(-log2FoldChange) %>% pull(gene_id) 
+sig_down_cn <- res_sign_cn[which(res_sign_cn$log2FoldChange < 0), ] %>% arrange(log2FoldChange) %>% pull(gene_id) # %>% head(50) %>% pull(gene)
+
+sig_cn <- c(sig_up_cn, sig_down_cn)
+
+#row_annotation <- gene_symbol %>% 
+                    #as_tibble() %>% 
+                    #dplyr::filter(gene_id %in% sig)
+
+plotmat <- counts_raw %>% dplyr::select(any_of(c(samples_never, samples_current)))
+                                                                                  
+plotmat <- plotmat[sig_cn,] %>% as.matrix()
+
+# Color palette
+heat.colors <- brewer.pal(6, "YlOrRd")
+
+colors = list(
+  Sample_group = c("current" = "red", "past" = "orange", "never" = "green")
+  #Sample_group = c("current" = "red", "never" = "green")
+)
+metadata %>% as.data.frame()
+annotation_ph <- metadata[, c("Sample_group"), drop = FALSE]
+
+# Plot heatmap
+#color = heat.colors,
+pheatmap(plotmat, 
+         scale = "row", 
+         show_rownames = TRUE,
+         border = FALSE,
+         annotation = annotation_ph,
+         annotation_colors = colors,
+         main = "PTSD Up- and Down- regulated genes",
+         fontsize = 14)
+
+```
+
+# Clustering using top 1000 variable genes
+```{r, fig.width = 20, fig.height = 20}
+rv <- MatrixGenerics::rowVars(rld_mat)
+rv <- order(rv, decreasing = TRUE) %>% head(1000)
+rld_mat_1000 <- rld_mat[rv,]
+annotation <- metadata[, c("Sample_group")]
+
+# Change colors
+heat.colors <- brewer.pal(6, "Blues")
+rld_cor <- cor(rld_mat_1000)
+# Plot heatmap
+pheatmap(rld_cor, 
+         annotation = annotation, 
+         border = NA,
+         fontsize = 20)
+```
+
+## Differential testing: multigroup
+
+```{r, fig.width = 10, fig.height = 5}
+#dds <- DESeqDataSetFromMatrix(countData = counts_raw, colData = metadata,
+  #design = ~Sample_group)
+#dds <- DESeq(dds)
+
+#dds_lrt <- DESeq(dds, test="LRT", reduced = ~ 1)
+
+res_lrt <- results(dds_lrt) %>% 
+  as.data.frame() %>%
+  tibble::rownames_to_column(var="gene_id") %>% 
+  as_tibble()%>%
+  arrange(padj)
+  
+
+intercept_genes_sig <- res_lrt %>% 
+  dplyr::filter(padj < 0.05) %>%
+  #arrange(padj) %>%
+  head(n=3000)
+
+intercept_preprocessed <- assay(dds)[intercept_genes_sig$gene_id, ]
+
+intercept_preprocessed <- varianceStabilizingTransformation(intercept_preprocessed)
+
+dim(intercept_preprocessed)
+
+metadata <- as.data.frame(metadata)
+
+metadata$Sample_group <- factor(metadata$Sample_group, levels = c("never", "current", "past"))
+
+
+clusters_intercept <- degPatterns(intercept_preprocessed, metadata = metadata, time = "Sample_group", , col=NULL)
+
+groups_intercept <- clusters_intercept$df
+
+write.csv(groups_intercept, "GSE97356/clusters.csv")
+```
+
+
+## Visualizations
+
+```{r, fig.width = 10, fig.height = 7}
+#BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+volcano_df <- res_ashr_cn %>% as.data.frame()
+EnhancedVolcano(volcano_df,
+                lab = rownames(volcano_df),
+                x = "log2FoldChange",
+                y = "padj",
+                title = 'Volcano plot current/never',
+                pCutoff = 0.05,
+                FCcutoff = 0.27) + 
+          ggplot2::coord_cartesian(xlim=c(-1, 1), ylim = c(0,3)) + 
+          ggplot2::scale_x_continuous(breaks=seq(-1,1, 1)) + 
+          ggplot2::scale_y_continuous(breaks=seq(0,3, 1))
+          
+                
+```
+# Functional analysis
+
+## Create background dataset for hypergeometric testing using all genes tested for significance in the results                 
+```{r, fig.width=10, fig.height=10}
+#res <- res %>% rownames_to_column("gene")
+bg_genes <- res$gene
+
+## Run GO enrichment analysis 
+compGO <- enrichGO(gene = sig_up,
+                            universe = bg_genes,
+                            keyType = "ENSEMBL",
+                            OrgDb = "org.Mm.eg.db", 
+                            ont = "BP", 
+                            qvalueCutoff  = 0.05, 
+                            pAdjustMethod = "BH")
+
+dotplot(compGO,
+        showCategory = 20, 
+        title = "GO (Biological Process) Enrichment Analysis for UP in Treatment")
+# image pdf 12 x 12
+
+```
+
+
+```{r, fig.width=10, fig.height=10}
+## Run GO enrichment analysis 
+compGO <- enrichGO(gene = sig_down,
+                            universe = bg_genes,
+                            keyType = "ENSEMBL",
+                            OrgDb = org.Mm.eg.db, 
+                            ont = "BP", 
+                            qvalueCutoff  = 0.05, 
+                            pAdjustMethod = "BH")
+
+dotplot(compGO, showCategory = 25, title = "GO (Biological Process) Enrichment Analysis for DOWN in Treatment")
 ```
