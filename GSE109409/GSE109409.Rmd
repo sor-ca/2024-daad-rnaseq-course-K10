@@ -55,13 +55,60 @@ opts_chunk[["set"]](
 counts_csv <- "raw_counts.tsv"
 counts_raw <- read.csv(counts_csv, sep = "\t", row.names = 1)
 
+```
+```{r}
+counts_csv <- "raw_counts.tsv"
+#counts_raw <- read.csv(counts_csv, sep = "\t", row.names = 1)
+    counts_raw <- read.csv(counts_csv,  sep = "\t") 
+    colnames(counts_raw)[1] <- "gene_name"
+    #counts_tpm <- read_csv(counts_tpm_csv)
+    
+    # use Ensembl_Gene_id
+    # remove genes with NA
+    # filter protein coding genes
+
+    annotation <- read_csv("annot.csv")
+    
+    annotation <- dplyr::select(annotation, c("GeneID", "Symbol", "Length"))
+    
+    counts_prepared <- counts_raw %>% 
+            left_join(annotation, by = c("gene_name" = "GeneID")) %>%
+           dplyr::select(-gene_name) %>% 
+            dplyr::rename("gene_id" = "Symbol")%>%
+            relocate(gene_id)
+    counts_prepared <-  counts_prepared[!apply(counts_prepared, 1, function(row) any(row == 'negative')), ]
+
+    print(which(duplicated(counts_prepared$gene_id)))
+    counts_prepared <- counts_prepared[-which(duplicated(counts_prepared$gene_id)), ]
+    #counts_prepared <-  counts_prepared[!apply(counts_prepared, 1, function(row) any(row == 'TRNAV-CAC')), ]
+
+    
+    v_len <- dplyr::select(counts_prepared, c("gene_id", "Length")) %>% as.data.frame()
+    
+          
+        counts <- counts_prepared %>% arrange(gene_id)
+        counts <- dplyr::select(counts, -Length)  %>% as.data.frame()
+        
+        counts <- counts %>% column_to_rownames("gene_id")
+        
+        x <- counts / as.numeric(v_len$Length)
+        counts_raw <- t(t(x) * 1e6 / colSums(x)) #%>% 
+          as.data.frame() %>% round(2) #%>% 
+          #rownames_to_column("gene_id") %>% 
+        
+          #left_join(gene_symbol, by = c("ensembl_gene_id" = "gene_id")) %>% 
+          #write_csv(counts_tpm_csv)
+        #counts_raw <- counts_prepared %>% column_to_rownames(var = "gene_id")
+```
+
+```{r}
 metadata_tsv <- "metadata.tsv"
 metadata <- read.csv(metadata_tsv, sep = "\t", row.names = 1)
-#str_replace_all(metadata[10,], c("ptsd: Past" = "past", "ptsd: Current" = "current", "ptsd: Never" = "control"))
 metadata <- as.data.frame(t(metadata))
 ```
 ```{r}
-dds_file <- "GSE109409/dds.RDS"
+dds_file <- "dds.RDS"
+typeof(counts_raw[1,1])
 dds <- DESeqDataSetFromMatrix(countData = counts_raw, 
                               colData = metadata, 
                               design = ~Sample_group)
@@ -121,29 +168,20 @@ get_counts_for_samples <- function(ctpm, samples, column_name){
     
     return(tpm_counts)
 }
-#ddsTAA <- subset(dds, select = colData(dds)$experiment == "TAA")
-#ddsTAA <- subset(ddsTAA, select = colData(ddsTAA)$treatment == "HC" | colData(ddsTAA)$treatment == "CIR")
-#ddsTAA$treatment <- droplevels(ddsTAA$treatment)
-#ddsTAA$treatment <- relevel(ddsTAA$treatment, ref = "HC")
-#str_replace_all(dds$Sample_group, "past", "ptsd")
-#str_replace_all(dds$Sample_group, "current", "ptsd")
-#dds <- droplevels(dds$Sample_group)
-#dds <- relevel(dds$Sample_group, ref = "control")
-
-
-
 
 #contrast <- c("treatment", "CIR", "HC")
 contrast <- c("Sample_group", "positive", "negative")
-#ddsTAA <- DESeq(ddsTAA)
 
 #resTreatment <- results(dds, contrast = contrast, alpha = 0.05)
 res <- results(dds, contrast = contrast, alpha = 0.05)
 length(which(res$padj < 0.05))
 
+res <- as.data.frame(res)
+write_csv(res, "results.csv")
+
 # Add annotations
-res_significant <- dplyr::filter(data.frame(res), padj < 0.05) %>%  
-                        dplyr::filter(abs(log2FoldChange) > 1.5) %>% 
+res_significant <- #dplyr::filter(res, padj < 0.05) %>%  
+                        dplyr::filter(res, abs(log2FoldChange) > 0.5) %>% 
                         comb_de_result_table()
 
 #write_csv(resTreatment_tb_significant, "../../03_outputs/T4.TAA_results.csv")
@@ -154,19 +192,20 @@ samples_control <- metadata %>% rownames_to_column("Sample_id") %>% dplyr::filte
 counts_control <- get_counts_for_samples(counts_raw, samples_control, "control_mean")
 
 samples_effect <- metadata %>% dplyr::filter(Sample_group == "positive") %>% row.names() 
-counts_effect <- get_counts_for_samples(counts_tpm, samples_effect, "ptsd_mean")
+counts_effect <- get_counts_for_samples(counts_raw, samples_effect, "ptsd_mean")
 
 tpm_counts <- counts_effect %>% 
               left_join(counts_control,
-                        by = c(1 = 1))
+                        by = c("gene_id" = "gene_id"))
+#rownames_to_column(res_significant, "gene_id")
 
-res_significant <- res_significant %>% 
-          left_join(tpm_counts, by = c(1 = 1)) %>%
-          arrange(log2FoldChange)
+#res_significant <- res_significant %>% 
+  #left_join(tpm_counts, by = c(1 = "gene_id")) %>% 
+  #arrange(log2FoldChange)
 
 #write_xlsx(list(T4.TAA_results = resTreatment_tb_significant), "../../03_outputs/T4.DE_TAA.xlsx")
 
 # Separate into up and down-regulated gene sets
-sig_up <- rownames(res)[which(res$padj < 0.01 & res$log2FoldChange > 0)]
-sig_down <- rownames(res)[which(res$padj < 0.01 & res$log2FoldChange < 0)]
+sig_up <- rownames(res)[which(res$padj < 0.05 & res$log2FoldChange > 0)]
+sig_down <- rownames(res)[which(res$padj < 0.05 & res$log2FoldChange < 0)]
 ```
