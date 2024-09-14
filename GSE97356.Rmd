@@ -187,14 +187,33 @@ res_sign_cp <- res_sign_cp %>%
 
 
 ```{r}
-
-res_ashr_cn <- results(dds, contrast = c("Sample_group", "current", "never"))
+library(ashr)
+contrast_cn <- c("Sample_group", "current", "never")
+res_ashr_cn <- results(dds, contrast = contrast_cn)
 res_shrink_cn <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "current", "never"))
 
 res_sig_ashr_cn <- res_ashr_cn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
 res_shrink_sig_cn <- res_shrink_cn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
 
-#hist(res_shrink$log2FoldChange, 100)
+hist(res_ashr_cn$log2FoldChange, 100)
+
+contrast_pn <- c("Sample_group", "past", "never")
+res_ashr_pn <- results(dds, contrast = contrast_pn)
+res_shrink_pn <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "current", "never"))
+
+res_sig_ashr_pn <- res_ashr_pn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
+res_shrink_sig_pn <- res_shrink_pn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
+
+hist(res_ashr_pn$log2FoldChange, 100)
+
+contrast_cp <- c("Sample_group", "past", "never")
+res_ashr_cp <- results(dds, contrast = contrast_cp)
+res_shrink_cp <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "current", "never"))
+
+res_sig_ashr_cp <- res_ashr_cp %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
+res_shrink_sig_cp <- res_shrink_cp %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
+
+hist(res_ashr_cp$log2FoldChange, 100)
 ```
 ```{r, fig.width = 10, fig.height = 10}
 # Create a matrix of normalized expression
@@ -296,12 +315,36 @@ write.csv(groups_intercept, "GSE97356/clusters.csv")
 ```{r, fig.width = 10, fig.height = 7}
 #BiocManager::install("EnhancedVolcano")
 library(EnhancedVolcano)
-volcano_df <- res_ashr_cn %>% as.data.frame()
-EnhancedVolcano(volcano_df,
-                lab = rownames(volcano_df),
+volcano_cn <- res_ashr_cn %>% as.data.frame()
+EnhancedVolcano(volcano_cn,
+                lab = rownames(volcano_cn),
                 x = "log2FoldChange",
                 y = "padj",
                 title = 'Volcano plot current/never',
+                pCutoff = 0.05,
+                FCcutoff = 0.27) + 
+          ggplot2::coord_cartesian(xlim=c(-1, 1), ylim = c(0,3)) + 
+          ggplot2::scale_x_continuous(breaks=seq(-1,1, 1)) + 
+          ggplot2::scale_y_continuous(breaks=seq(0,3, 1))
+
+volcano_pn <- res_ashr_pn %>% as.data.frame()
+EnhancedVolcano(volcano_pn,
+                lab = rownames(volcano_pn),
+                x = "log2FoldChange",
+                y = "padj",
+                title = 'Volcano plot past/never',
+                pCutoff = 0.05,
+                FCcutoff = 0.27) + 
+          ggplot2::coord_cartesian(xlim=c(-1, 1), ylim = c(0,3)) + 
+          ggplot2::scale_x_continuous(breaks=seq(-1,1, 1)) + 
+          ggplot2::scale_y_continuous(breaks=seq(0,3, 1))
+
+volcano_cp <- res_ashr_cp %>% as.data.frame()
+EnhancedVolcano(volcano_cp,
+                lab = rownames(volcano_cp),
+                x = "log2FoldChange",
+                y = "padj",
+                title = 'Volcano plot past/never',
                 pCutoff = 0.05,
                 FCcutoff = 0.27) + 
           ggplot2::coord_cartesian(xlim=c(-1, 1), ylim = c(0,3)) + 
@@ -331,6 +374,13 @@ dotplot(compGO,
         title = "GO (Biological Process) Enrichment Analysis for UP in Treatment")
 # image pdf 12 x 12
 
+```
+```{r}
+write.csv(res_sign_cn, "GSE97356/res_sign_cn_1.csv")
+write.csv(res_sign_pn, "GSE97356/res_sign_pn_1.csv")
+write.csv(res_sig_ashr_cn, "GSE97356/res_sign_cn_ashr.csv")
+write.csv(res_sig_ashr_cp, "GSE97356/res_sign_cp_ashr.csv")
+write.csv(res_sig_ashr_pn, "GSE97356/res_sign_cp_ashr.csv")
 ```
 
 
