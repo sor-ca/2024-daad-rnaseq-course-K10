@@ -3,14 +3,39 @@ pacman::p_load("here", "tidyverse", "DESeq2", "ashr", "EnhancedVolcano")
 ```
 
 ```{r}
+install.packages("ggplot2")
+install.packages("ggrepel")
+
+```
+
+```{r}
+install.packages("reshape2")
+```
+
+```{r}
+install.packages("viridis")
+```
+
+```{r}
+install.packages("gridExtra")
+```
+
+```{r}
+if (!requireNamespace("DESeq2", quietly = TRUE)) {
+  install.packages("BiocManager")
+  BiocManager::install("DESeq2")
+}
+library(DESeq2)
+
+```
+
+```{r}
 i_am("2024-daad-rnaseq-course-K10/SecondDS.Rmd")
 ```
 
 ```{r}
 counts <- read.table("C:/Users/uznaa/OneDrive/Документы/GitHub/2024-daad-rnaseq-course-K10/GSE223269_Raw_gene_counts_matrix.txt", header = TRUE, row.names = 1, sep = "\t")
-counts <- apply(counts, 2, as.numeric)
 ```
-
 
 ```{r}
 coldata <- data.frame(
@@ -27,7 +52,6 @@ rownames(coldata) <- colnames(counts)
 ```{r}
 subset_data <- coldata[coldata$brain_region %in% c("CeA", "BLA", "ACC", "BNST"), ]
 ```
-
 
 ```{r}
 dds_subset <- DESeqDataSetFromMatrix(countData = counts[, rownames(subset_data)], 
@@ -60,3 +84,157 @@ plotMA(res_sex)
 plotMA(res_time)
 ```
 
+#PCA
+
+```{r}
+library(ggrepel)
+library(ggplot2)
+
+```
+
+```{r}
+rld <- vst(dds_subset)
+```
+
+```{r, fig.width = 15, fig.height = 7}
+pca_plot_p <- plotPCA(rld, intgroup = "sample_id", ntop = 1200) +
+  theme_bw()
+
+
+print(pca_plot_p)
+```
+
+#Heatmap
+
+```{r}
+library(reshape2)  
+library(viridis)
+# Встановлюємо бібліотеку для теплових карт
+install.packages("pheatmap")
+library(pheatmap)
+
+```
+
+```{r}
+n_samples <- ncol(counts)
+
+annotation_col <- data.frame(
+  brain_region = factor(rep(c("CeA", "BLA", "ACC", "BNST"), length.out = n_samples)),
+  phenotype = factor(rep(c("phasic", "sustained"), length.out = n_samples)),
+  sex = factor(rep(c("male", "female"), length.out = n_samples)),
+  time_point = factor(rep(c("24_hours", "28_days"), length.out = n_samples))
+)
+rownames(annotation_col) <- colnames(counts)
+```
+
+```{r, fig.width = 15, fig.height = 7}
+counts_filtered <- counts[sig_genes_phenotype, , drop = FALSE]
+
+counts_filtered_numeric <- as.data.frame(lapply(counts_filtered, function(x) as.numeric(as.character(x))))
+counts_filtered_numeric[is.na(counts_filtered_numeric)] <- rowMeans(counts_filtered_numeric, na.rm = TRUE)
+annotation_col <- annotation_col[colnames(counts_filtered_numeric), , drop = FALSE]
+ 
+```
+
+```{r, fig.width = 15, fig.height = 7}
+# Фільтрація даних для phenotype
+rownames(res_phenotype) <- rownames(counts)
+res_phenotype_filtered <- res_phenotype[!is.na(res_phenotype$padj) & !is.na(res_phenotype$log2FoldChange), ]
+sig_genes_phenotype <- rownames(res_phenotype_filtered[abs(res_phenotype_filtered$log2FoldChange) > 0.27 & res_phenotype_filtered$padj < 0.05, ])
+counts_filtered_phenotype <- counts[sig_genes_phenotype, ]
+
+# Підготовка даних для heatmap для phenotype
+counts_filtered_phenotype$Gene <- rownames(counts_filtered_phenotype)
+counts_long_phenotype <- melt(counts_filtered_phenotype, id.vars = "Gene")
+colnames(counts_long_phenotype) <- c("Gene", "Sample", "Expression")
+
+# Перетворення даних у числовий формат для phenotype
+counts_filtered_numeric_phenotype <- as.data.frame(lapply(counts_filtered_phenotype, function(x) as.numeric(as.character(x))))
+counts_filtered_numeric_phenotype[is.na(counts_filtered_numeric_phenotype)] <- rowMeans(counts_filtered_numeric_phenotype, na.rm = TRUE)
+
+# Побудова теплової карти для phenotype
+pheatmap(
+  counts_filtered_numeric_phenotype,  
+  cluster_rows = TRUE,      
+  cluster_cols = TRUE,      
+  scale = "row",            
+  annotation_col = annotation_col,  # Використовуємо ті самі анотації
+  color = colorRampPalette(c("blue", "white", "red"))(50)
+)
+
+```
+
+```{r}
+BiocManager::install("clusterProfiler")
+```
+
+```{r}
+# Для phenotype
+sig_genes_phenotype <- rownames(res_phenotype[!is.na(res_phenotype$padj) & res_phenotype$padj < 0.05 & abs(res_phenotype$log2FoldChange) > 0.27, ])
+
+# Для sex
+sig_genes_sex <- rownames(res_sex[!is.na(res_sex$padj) & res_sex$padj < 0.05 & abs(res_sex$log2FoldChange) > 0.27, ])
+
+# Для time
+sig_genes_time <- rownames(res_time[!is.na(res_time$padj) & res_time$padj < 0.05 & abs(res_time$log2FoldChange) > 0.27, ])
+
+```
+
+```{r}
+BiocManager::install("org.Mm.eg.db")
+```
+
+```{r}
+library(clusterProfiler)
+library(org.Mm.eg.db)
+
+bg_genes <- rownames(counts)
+
+# GO аналіз для phenotype
+compGO_phenotype <- enrichGO(
+  gene = sig_genes_phenotype,  # Список значущих генів для phenotype
+  universe = bg_genes,         
+  keyType = "SYMBOL",
+  OrgDb = org.Mm.eg.db,
+  ont = "BP",                  
+  pAdjustMethod = "none"
+)
+
+# GO аналіз для sex
+compGO_sex <- enrichGO(
+  gene = sig_genes_sex,  # Список значущих генів для sex
+  universe = bg_genes,
+  keyType = "SYMBOL",
+  OrgDb = org.Mm.eg.db,
+  ont = "BP",                  
+  pAdjustMethod = "none"
+)
+
+# GO аналіз для time
+compGO_time <- enrichGO(
+  gene = sig_genes_time,  # Список значущих генів для time
+  universe = bg_genes,
+  keyType = "SYMBOL",
+  OrgDb = org.Mm.eg.db,
+  ont = "BP",                  
+  pAdjustMethod = "none"
+)
+
+
+```
+
+```{r}
+library(gridExtra)
+
+bubble_plot <- dotplot(compGO_phenotype, 
+                       showCategory = 3, 
+                       title = "GO Enrichment for Phenotype", 
+                       x = "Count", 
+                       color = "p.adjust", 
+                       size = "GeneRatio")
+
+table_plot <- tableGrob(top_go)
+
+grid.arrange(bubble_plot, table_plot, ncol = 1)
+
+```
