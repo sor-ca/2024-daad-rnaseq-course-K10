@@ -350,31 +350,36 @@ EnhancedVolcano(volcano_cp,
           ggplot2::coord_cartesian(xlim=c(-1, 1), ylim = c(0,3)) + 
           ggplot2::scale_x_continuous(breaks=seq(-1,1, 1)) + 
           ggplot2::scale_y_continuous(breaks=seq(0,3, 1))
-          
-                
 ```
-# Functional analysis
 
-## Create background dataset for hypergeometric testing using all genes tested for significance in the results                 
-```{r, fig.width=10, fig.height=10}
-#res <- res %>% rownames_to_column("gene")
-bg_genes <- res$gene
 
-## Run GO enrichment analysis 
-compGO <- enrichGO(gene = sig_up,
-                            universe = bg_genes,
-                            keyType = "ENSEMBL",
-                            OrgDb = "org.Mm.eg.db", 
-                            ont = "BP", 
-                            qvalueCutoff  = 0.05, 
-                            pAdjustMethod = "BH")
+```{r, fig.width = 10, fig.height = 7 }
 
-dotplot(compGO,
-        showCategory = 20, 
-        title = "GO (Biological Process) Enrichment Analysis for UP in Treatment")
-# image pdf 12 x 12
+metadata$Sample_group <- factor(metadata$Sample_group, levels = c("never", "current", "past"))
+ metadata_sample_group <- metadata %>% dplyr::select(Sample_group)
+
+#rld <- vst(dds_dataset, blind = TRUE)
+rld <- vst(dds, blind = TRUE)
+sig_gene_names <- c(rownames(res_sig_ashr_cn), "GRB10")
+counts_assay <- assay(rld) %>% as.data.frame()
+sig_counts <- counts_assay[rownames(counts_assay) %in% sig_gene_names, ]
+
+#sig_counts_scaled <- t(scale(t(sig_counts)))
+#counts_vst <- assay(rld) %>% as.data.frame()
+#matrix_correlations <- cor(counts_vst)
+
+pheatmap(
+  #matrix_correlations,
+  sig_counts,
+  annotation = metadata_sample_group, 
+  cluster_rows = TRUE, 
+  cluster_cols = FALSE, 
+  show_rownames = TRUE, 
+  show_colnames = FALSE
+  )
 
 ```
+
 ```{r}
 write.csv(res_sign_cn, "GSE97356/res_sign_cn_1.csv")
 write.csv(res_sign_pn, "GSE97356/res_sign_pn_1.csv")
