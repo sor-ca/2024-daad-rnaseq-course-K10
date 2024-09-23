@@ -24,6 +24,7 @@ install.packages("gridExtra")
 if (!requireNamespace("DESeq2", quietly = TRUE)) {
   install.packages("BiocManager")
   BiocManager::install("DESeq2")
+  
 }
 library(DESeq2)
 
@@ -127,6 +128,18 @@ annotation_col <- data.frame(
 rownames(annotation_col) <- colnames(counts)
 ```
 
+```{r}
+# Для phenotype
+sig_genes_phenotype <- rownames(res_phenotype[!is.na(res_phenotype$padj) & res_phenotype$padj < 0.05 & abs(res_phenotype$log2FoldChange) > 0.27, ])
+
+# Для sex
+sig_genes_sex <- rownames(res_sex[!is.na(res_sex$padj) & res_sex$padj < 0.05 & abs(res_sex$log2FoldChange) > 0.27, ])
+
+# Для time
+sig_genes_time <- rownames(res_time[!is.na(res_time$padj) & res_time$padj < 0.05 & abs(res_time$log2FoldChange) > 0.27, ])
+```
+
+
 ```{r, fig.width = 15, fig.height = 7}
 counts_filtered <- counts[sig_genes_phenotype, , drop = FALSE]
 
@@ -166,18 +179,6 @@ pheatmap(
 
 ```{r}
 BiocManager::install("clusterProfiler")
-```
-
-```{r}
-# Для phenotype
-sig_genes_phenotype <- rownames(res_phenotype[!is.na(res_phenotype$padj) & res_phenotype$padj < 0.05 & abs(res_phenotype$log2FoldChange) > 0.27, ])
-
-# Для sex
-sig_genes_sex <- rownames(res_sex[!is.na(res_sex$padj) & res_sex$padj < 0.05 & abs(res_sex$log2FoldChange) > 0.27, ])
-
-# Для time
-sig_genes_time <- rownames(res_time[!is.na(res_time$padj) & res_time$padj < 0.05 & abs(res_time$log2FoldChange) > 0.27, ])
-
 ```
 
 ```{r}
@@ -224,6 +225,11 @@ compGO_time <- enrichGO(
 ```
 
 ```{r}
+top_go <- as.data.frame(compGO_phenotype)
+
+# Сортуємо за значенням p.adjust і вибираємо топ-3 терміни
+top_go <- top_go[order(top_go$p.adjust), ][1:3, ]
+
 library(gridExtra)
 
 bubble_plot <- dotplot(compGO_phenotype, 
