@@ -81,7 +81,7 @@ dds <- DESeq(dds)
 ### Transform counts for data visualization (unsupervised analysis)
 rld_file <- "GSE97356/rld.RDS"
 rld <- vst(dds)
-saveRDS(rld, rld_file)
+#saveRDS(rld, rld_file)
 
 # we also need just a matrix of transformed counts
 rld_mat <- assay(rld)
