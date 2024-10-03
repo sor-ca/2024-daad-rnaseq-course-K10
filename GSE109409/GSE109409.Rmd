@@ -51,11 +51,7 @@ opts_chunk[["set"]](
     warning = FALSE)
 
 ```
-```{r}
-counts_csv <- "raw_counts.tsv"
-counts_raw <- read.csv(counts_csv, sep = "\t", row.names = 1)
 
-```
 ```{r}
 counts_csv <- "raw_counts.tsv"
 #counts_raw <- read.csv(counts_csv, sep = "\t", row.names = 1)
@@ -92,13 +88,14 @@ counts_csv <- "raw_counts.tsv"
         counts <- counts %>% column_to_rownames("gene_id")
         
         x <- counts / as.numeric(v_len$Length)
-        counts_raw <- t(t(x) * 1e6 / colSums(x)) #%>% 
-          as.data.frame() %>% round(2) #%>% 
+        counts_tpm <- t(t(x) * 1e6 / colSums(x)) %>% 
+          as.data.frame() %>% round(2) 
+        write.csv(counts_tpm, "counts_tpm")
           #rownames_to_column("gene_id") %>% 
         
           #left_join(gene_symbol, by = c("ensembl_gene_id" = "gene_id")) %>% 
           #write_csv(counts_tpm_csv)
-        #counts_raw <- counts_prepared %>% column_to_rownames(var = "gene_id")
+        counts_raw <- counts
 ```
 
 ```{r}
@@ -108,27 +105,21 @@ metadata <- as.data.frame(t(metadata))
 ```
 ```{r}
 dds_file <- "dds.RDS"
-typeof(counts_raw[1,1])
-dds <- DESeqDataSetFromMatrix(countData = counts_raw, 
+dds_dataset <- DESeqDataSetFromMatrix(countData = counts_raw, 
                               colData = metadata, 
                               design = ~Sample_group)
-keep <- rowMeans(counts(dds)) >= 100
-dds <- dds[keep, ]
-
-# Run DESeq2
-dds <- DESeq(dds)
-#saveRDS(dds, dds_file)
+keep <- rowMeans(counts(dds_dataset)) >= 100
+dds_dataset <- dds_dataset[keep, ]
+dds <- DESeq(dds_dataset)
+saveRDS(dds, dds_file)
 ```
 
 # Sample-level QC analysis 
 ```{r include = FALSE}
 ### Transform counts for data visualization (unsupervised analysis)
-rld_file <- "GSE109409/rld.RDS"
+rld_file <- "rld.RDS"
 rld <- vst(dds)
-#saveRDS(rld, rld_file)
-
-# we also need just a matrix of transformed counts
-rld_mat <- assay(rld)
+saveRDS(rld, rld_file)
 ```
 # PCA
 ```{r, fig.width = 10, fig.height = 10}
@@ -136,76 +127,144 @@ plotPCA(rld, ntop = 1200, intgroup = c("Sample_group")) +
   geom_label_repel(aes(label = name)) + 
   theme_bw()
 ```
-# DE in TAA
-```{r}
-# get rid of excess precision
-comb_de_result_table <- function(results){
-    results <- results %>%
-        mutate(baseMean = round(baseMean, 2),
-               log2FoldChange = round(log2FoldChange, 2),
-               lfcSE = round(lfcSE, 2),
-               stat = round(stat, 2),
-               pvalue = format(pvalue, scientific = TRUE, digits = 2),
-               padj = format(padj, scientific = TRUE, digits = 2))
-    return(results)
-}
+# DE
 
-# return mean counts for a group of sample in a column
-get_counts_for_samples <- function(ctpm, samples, column_name){
-    tpm_counts <- ctpm %>%
-        #column_to_rownames("ID_REF") %>% 
-        dplyr::select(any_of(samples)) %>% 
-        rowMeans() %>%
-        as.data.frame() %>%
-        round(2) %>%
-        rownames_to_column("gene_id") 
-    
-    colnames(tpm_counts) <- c("gene_id", "tpm")
-    
-    tpm_counts <- tpm_counts %>% 
-        dplyr::mutate("{column_name}" := round(tpm, 2)) %>% 
-        dplyr::select(-tpm)
-    
-    return(tpm_counts)
-}
+```{r, , fig.width = 10, fig.height = 5}
+pacman::p_load("ashr")
 
-#contrast <- c("treatment", "CIR", "HC")
 contrast <- c("Sample_group", "positive", "negative")
+res_ashr <- results(dds, contrast = contrast) %>% as.data.frame()
+res_shrink <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "positive", "negative")) %>% as.data.frame()
 
-#resTreatment <- results(dds, contrast = contrast, alpha = 0.05)
-res <- results(dds, contrast = contrast, alpha = 0.05)
-length(which(res$padj < 0.05))
+res_sig_ashr <- res_ashr  %>% dplyr::filter(pvalue < 0.05, abs(log2FoldChange) > 0.27)
+res_shrink_sig <- res_shrink %>% dplyr::filter(pvalue < 0.05, abs(log2FoldChange) > 0.27)
 
-res <- as.data.frame(res)
-write_csv(res, "results.csv")
+hist(res_ashr$log2FoldChange, 100)
+```
 
-# Add annotations
-res_significant <- #dplyr::filter(res, padj < 0.05) %>%  
-                        dplyr::filter(res, abs(log2FoldChange) > 0.5) %>% 
-                        comb_de_result_table()
+## Volcano plots
 
-#write_csv(resTreatment_tb_significant, "../../03_outputs/T4.TAA_results.csv")
+```{r, fig.width = 10, fig.height = 7}
+#BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+volcano <- res_ashr %>% as.data.frame()
+EnhancedVolcano(volcano,
+                lab = rownames(volcano),
+                x = "log2FoldChange",
+                y = "pvalue",
+                title = 'Volcano plot current/never',
+                pCutoff = 0.05,
+                FCcutoff = 0.27) + 
+          ggplot2::coord_cartesian(xlim=c(-1, 1), ylim = c(0,3)) + 
+          ggplot2::scale_x_continuous(breaks=seq(-1,1, 1)) + 
+          ggplot2::scale_y_continuous(breaks=seq(0,3, 1))
+```
 
-samples_control <- metadata %>% rownames_to_column("Sample_id") %>% dplyr::filter(Sample_group == "negative")  %>% pull(Sample_id)
+#heatmap
+```{r, fig.width = 10, fig.height = 7 }
 
-#counts_tpm$symbol <- NULL
-counts_control <- get_counts_for_samples(counts_raw, samples_control, "control_mean")
+metadata$Sample_group <- factor(metadata$Sample_group, levels = c("positive", "negative"))
+metadata_sample_group <- metadata %>% dplyr::select(Sample_group)
 
-samples_effect <- metadata %>% dplyr::filter(Sample_group == "positive") %>% row.names() 
-counts_effect <- get_counts_for_samples(counts_raw, samples_effect, "ptsd_mean")
+rld <- vst(dds_dataset, blind = TRUE)
+#rld <- vst(dds, blind = TRUE)
+sig_gene_names <- rownames(res_sig_ashr)
+counts_assay <- assay(rld) %>% as.data.frame()
+sig_counts <- counts_assay[rownames(counts_assay) %in% sig_gene_names, ]
 
-tpm_counts <- counts_effect %>% 
-              left_join(counts_control,
-                        by = c("gene_id" = "gene_id"))
-#rownames_to_column(res_significant, "gene_id")
+#sig_counts_scaled <- t(scale(t(sig_counts)))
+#counts_vst <- assay(rld) %>% as.data.frame()
+#matrix_correlations <- cor(counts_vst)
 
-#res_significant <- res_significant %>% 
-  #left_join(tpm_counts, by = c(1 = "gene_id")) %>% 
-  #arrange(log2FoldChange)
+pheatmap(
+  #matrix_correlations,
+  sig_counts,
+  annotation = metadata_sample_group,
+  show_rownames = TRUE, 
+  show_colnames = FALSE
+  )
 
-#write_xlsx(list(T4.TAA_results = resTreatment_tb_significant), "../../03_outputs/T4.DE_TAA.xlsx")
+write.csv(res_sig_ashr, "res_sign_ashr.csv")
 
-# Separate into up and down-regulated gene sets
-sig_up <- rownames(res)[which(res$padj < 0.05 & res$log2FoldChange > 0)]
-sig_down <- rownames(res)[which(res$padj < 0.05 & res$log2FoldChange < 0)]
+```
+
+```{r, fig.width = 10, fig.height = 7}
+pacman::p_load("here", "tidyverse", "enrichR", "gprofiler2")
+
+plot_enrichr_results <- function(enrichr_results, pval_threshold = 0.05, top_n = 10, fill_column = "Combined.Score") {
+
+  filtered_results <- enrichr_results %>%
+    dplyr::filter(Adjusted.P.value <= pval_threshold) %>%
+    arrange(Adjusted.P.value) %>%
+    head(top_n)
+  
+  p <- ggplot(filtered_results, aes(x = reorder(Term, -Adjusted.P.value), 
+                                    y = -log10(Adjusted.P.value), 
+                                    fill = !!sym(fill_column))) +
+    geom_bar(stat = "identity") +
+    scale_fill_gradient(low = "#00b1b1", high = "#9f0077") +
+    coord_flip() +
+    theme_minimal() +
+    labs(title = "Top Enrichment Terms",
+         x = "Enrichment Term",
+         y = "-log10(Adjusted P-value)",
+         fill = fill_column) +
+    theme(axis.text = element_text(size = 12),
+          axis.title = element_text(size = 14),
+          plot.title = element_text(size = 16, face = "bold"))
+  
+  print(p)
+}
+
+de_results <- res_sig_ashr
+dbs <- listEnrichrDbs()
+dbs <- c("GO_Molecular_Function_2023", "GO_Biological_Process_2023", "GO_Cellular_Component_2023")
+
+enriched_up <- enrichr(rownames(de_results %>% dplyr::filter(log2FoldChange > 0) %>%arrange(desc(log2FoldChange))), dbs)
+
+enriched_down <- enrichr(rownames(de_results %>% dplyr::filter(log2FoldChange < 0) %>%arrange(log2FoldChange)), dbs)
+
+plot_enrichr_results(enriched_up$GO_Biological_Process_2023)
+
+#plot_enrichr_results(enriched_down$GO_Biological_Process_2023)
+
+enriched <- enrichr(rownames(de_results), dbs)
+plot_enrichr_results(enriched$GO_Biological_Process_2023)
+```
+
+```{r}
+pacman::p_load("here", "tidyverse", "enrichR", "gprofiler2")
+gostres <- gost(query = c(rownames(res_sig_ashr)), organism = "hsapiens",
+    ordered_query = TRUE)
+
+gostres_res <- gostres$result
+
+p <- gostplot(gostres, capped = FALSE, interactive = FALSE)
+p
+gost_csv <- gostres_res %>% as.data.frame() %>% rownames_to_column("number") %>% column_to_rownames("number")
+write.csv(gost_csv, "gostres.csv")
+#publish_gostplot(p, highlight_terms = c("GO:1900028", "GO:0034702", "GO:0005886", "TF:M10157", "TF:M11515_1"))
+```
+# Visualization - Gene example
+
+```{r, fig.width=12, fig.height = 12}
+pacman::p_load("here", "tidyverse", "gridExtra", "ggvenn")
+
+gene_plot <- function(dds, gene_name) {
+  d <- plotCounts(dds, 
+                gene = gene_name, 
+                intgroup = "Sample_group", 
+                returnData = TRUE)
+
+  p <- ggplot(d, aes(x = Sample_group, y = count, color = Sample_group)) + 
+       geom_point(position = position_jitter(w = 0.1, h = 0)) +
+       geom_text_repel(aes(label = rownames(d))) + 
+       theme_bw(base_size = 10) +
+       ggtitle(gene_name) +
+       theme(plot.title = element_text(hjust = 0.5)) +
+       scale_y_log10()
+    print(p)
+}
+
+#gene_plot(dds, "UNC45B")
 ```

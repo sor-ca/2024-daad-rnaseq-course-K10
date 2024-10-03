@@ -51,28 +51,27 @@ opts_chunk[["set"]](
     warning = FALSE)
 
 #install.packages(pacman)
-pacman::p_load("ashr")
 
 ```
+
 ```{r}
 counts_csv <- "GSE97356/raw_counts.csv"
 counts_raw <- read.csv(counts_csv, row.names = 1)
 
 metadata_tsv <- "GSE97356/metadata.csv"
 metadata <- read.csv(metadata_tsv, row.names = 1)
-metadata <- t(metadata)
+metadata <- t(metadata) %>% as.data.frame()
 #str_replace_all(metadata["Sample_group"], c("ptsd: Past" = "past", "ptsd: Current" = "current", "ptsd: Never" = "control"))
 ```
+
 ```{r}
-#dds_file <- "GSE97356/dds.RDS"
-dds <- DESeqDataSetFromMatrix(countData = counts_raw, 
+dds_file <- "GSE97356/dds.RDS"
+dds_dataset <- DESeqDataSetFromMatrix(countData = counts_raw, 
                               colData = metadata, 
                               design = ~Sample_group)
-keep <- rowMeans(counts(dds)) >= 100
-dds <- dds[keep, ]
-
-# Run DESeq2
-dds <- DESeq(dds)
+keep <- rowMeans(counts(dds_dataset)) >= 100
+dds_dataset <- dds_dataset[keep, ]
+dds <- DESeq(dds_dataset)
 #saveRDS(dds, dds_file)
 ```
 
@@ -84,207 +83,29 @@ rld <- vst(dds)
 #saveRDS(rld, rld_file)
 
 # we also need just a matrix of transformed counts
-rld_mat <- assay(rld)
+#rld_mat <- assay(rld)
 ```
 # PCA
 ```{r, fig.width = 10, fig.height = 10}
 plotPCA(rld, intgroup = c("Sample_group"), ntop = 500) + 
   geom_label_repel(aes(label = name)) + 
   theme_bw()
-```
-# DE
-```{r}
-# get rid of excess precision
-comb_de_result_table <- function(results){
-    results <- results %>%
-        mutate(baseMean = round(baseMean, 2),
-               log2FoldChange = round(log2FoldChange, 2),
-               lfcSE = round(lfcSE, 2),
-               stat = round(stat, 2),
-               pvalue = format(pvalue, scientific = TRUE, digits = 2),
-               padj = format(padj, scientific = TRUE, digits = 2))
-    return(results)
-}
-# return mean counts for a group of sample in a column
-get_counts_for_samples <- function(ctpm, samples, column_name){
-    tpm_counts <- ctpm %>%
-        dplyr::select(any_of(samples)) %>% 
-        rowMeans() %>%
-        as.data.frame() %>%
-        round(2) %>%
-        rownames_to_column("gene_id") 
-    
-    colnames(tpm_counts) <- c("gene_id", "tpm")
-    
-    tpm_counts <- tpm_counts %>% 
-        dplyr::mutate("{column_name}" := round(tpm, 2)) %>% 
-        dplyr::select(-tpm)
-    
-    return(tpm_counts)
-}
-
-
-#contrast <- c("treatment", "CIR", "HC")
-contrast_cn <- c("Sample_group", "current", "never")
-contrast_pn <- c("Sample_group", "past", "never")
-contrast_cp <- c("Sample_group", "current", "past")
-
-#resTreatment <- results(dds, contrast = contrast, alpha = 0.05)
-res_cn <- results(dds, contrast = contrast_cn, alpha = 0.05)  %>% as.data.frame()
-hist(res_cn$log2FoldChange, 100, main = "current/never log2FoldChange")
-
-res_pn <- results(dds, contrast = contrast_pn, alpha = 0.05)  %>% as.data.frame()
-hist(res_pn$log2FoldChange, 100,  main = "past/never log2FoldChange")
-
-res_cp <- results(dds, contrast = contrast_cp, alpha = 0.05)  %>% as.data.frame()
-hist(res_cp$log2FoldChange, 100, main = "current/past log2FoldChange")
-
-# Add annotations
-res_sign_cn <- dplyr::filter(res_cn, padj < 0.05) %>%  
-                        #dplyr::filter(abs(log2FoldChange) > 1.5) %>% 
-                        dplyr::filter(abs(log2FoldChange) > 0.27) %>% 
-                        comb_de_result_table() %>%
-                        rownames_to_column("gene_id")
-res_sign_pn <- dplyr::filter(res_pn, padj < 0.05) %>%  
-                        #dplyr::filter(abs(log2FoldChange) > 1.5) %>% 
-                        dplyr::filter(abs(log2FoldChange) > 0.27) %>% 
-                        comb_de_result_table() %>%
-                        rownames_to_column("gene_id")
-res_sign_cp <- dplyr::filter(res_cp, padj < 0.05) %>%  
-                        #dplyr::filter(abs(log2FoldChange) > 1.5) %>% 
-                        dplyr::filter(abs(log2FoldChange) > 0.27) %>% 
-                        comb_de_result_table() %>%
-                        rownames_to_column("gene_id")
-
-samples_never <- as.data.frame(metadata) %>% rownames_to_column("Sample_id") %>% 
-         dplyr::filter(Sample_group == "never")  %>% pull(Sample_id)
-counts_never <- get_counts_for_samples(counts_raw, samples_never, "control_mean")
-
-samples_current <- as.data.frame(metadata) %>% dplyr::filter(Sample_group == "current") %>% row.names() 
-counts_current <- get_counts_for_samples(counts_raw, samples_current, "current_ptsd_mean")
-
-samples_past <- as.data.frame(metadata) %>% dplyr::filter(Sample_group == "past") %>% row.names() 
-counts_past <- get_counts_for_samples(counts_raw, samples_past, "past_ptsd_mean")
-
-tpm_counts_cn <- counts_current %>% 
-              left_join(counts_never, by = c("gene_id" = "gene_id"))
-res_sign_cn <- res_sign_cn %>% 
-          left_join(tpm_counts_cn, by = c("gene_id" = "gene_id")) %>%
-          arrange(log2FoldChange)
-
-tpm_counts_pn <- counts_past %>% 
-              left_join(counts_never, by = c("gene_id" = "gene_id"))
-res_sign_pn <- res_sign_pn %>% 
-          left_join(tpm_counts_pn, by = c("gene_id" = "gene_id")) %>%
-          arrange(log2FoldChange)
-
-tpm_counts_cp <- counts_current %>% 
-              left_join(counts_past, by = c("gene_id" = "gene_id"))
-res_sign_cp <- res_sign_cp %>% 
-          left_join(tpm_counts_cp, by = c("gene_id" = "gene_id")) %>%
-          arrange(log2FoldChange)
-```
-
-
-```{r}
-library(ashr)
-contrast_cn <- c("Sample_group", "current", "never")
-res_ashr_cn <- results(dds, contrast = contrast_cn)
-res_shrink_cn <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "current", "never"))
-
-res_sig_ashr_cn <- res_ashr_cn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
-res_shrink_sig_cn <- res_shrink_cn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
-
-hist(res_ashr_cn$log2FoldChange, 100)
-
-contrast_pn <- c("Sample_group", "past", "never")
-res_ashr_pn <- results(dds, contrast = contrast_pn)
-res_shrink_pn <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "current", "never"))
-
-res_sig_ashr_pn <- res_ashr_pn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
-res_shrink_sig_pn <- res_shrink_pn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
-
-hist(res_ashr_pn$log2FoldChange, 100)
-
-contrast_cp <- c("Sample_group", "past", "never")
-res_ashr_cp <- results(dds, contrast = contrast_cp)
-res_shrink_cp <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "current", "never"))
-
-res_sig_ashr_cp <- res_ashr_cp %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
-res_shrink_sig_cp <- res_shrink_cp %>% as.data.frame() %>% dplyr::filter(padj < 0.05, log2FoldChange > abs(0.27))
-
-hist(res_ashr_cp$log2FoldChange, 100)
-```
-```{r, fig.width = 10, fig.height = 10}
-# Create a matrix of normalized expression
-sig_up_cn <- res_sign_cn[which(res_sign_cn$log2FoldChange > 0), ] %>% arrange(-log2FoldChange) %>% pull(gene_id) 
-sig_down_cn <- res_sign_cn[which(res_sign_cn$log2FoldChange < 0), ] %>% arrange(log2FoldChange) %>% pull(gene_id) # %>% head(50) %>% pull(gene)
-
-sig_cn <- c(sig_up_cn, sig_down_cn)
-
-#row_annotation <- gene_symbol %>% 
-                    #as_tibble() %>% 
-                    #dplyr::filter(gene_id %in% sig)
-
-plotmat <- counts_raw %>% dplyr::select(any_of(c(samples_never, samples_current)))
-                                                                                  
-plotmat <- plotmat[sig_cn,] %>% as.matrix()
-
-# Color palette
-heat.colors <- brewer.pal(6, "YlOrRd")
-
-colors = list(
-  Sample_group = c("current" = "red", "past" = "orange", "never" = "green")
-  #Sample_group = c("current" = "red", "never" = "green")
-)
-metadata %>% as.data.frame()
-annotation_ph <- metadata[, c("Sample_group"), drop = FALSE]
-
-# Plot heatmap
-#color = heat.colors,
-pheatmap(plotmat, 
-         scale = "row", 
-         show_rownames = TRUE,
-         border = FALSE,
-         annotation = annotation_ph,
-         annotation_colors = colors,
-         main = "PTSD Up- and Down- regulated genes",
-         fontsize = 14)
-
-```
-
-# Clustering using top 1000 variable genes
-```{r, fig.width = 20, fig.height = 20}
-rv <- MatrixGenerics::rowVars(rld_mat)
-rv <- order(rv, decreasing = TRUE) %>% head(1000)
-rld_mat_1000 <- rld_mat[rv,]
-annotation <- metadata[, c("Sample_group")]
-
-# Change colors
-heat.colors <- brewer.pal(6, "Blues")
-rld_cor <- cor(rld_mat_1000)
-# Plot heatmap
-pheatmap(rld_cor, 
-         annotation = annotation, 
-         border = NA,
-         fontsize = 20)
+#BiocManager::install("PCAtools")
+#library(PCAtools)
+#p = pca(counts_raw, metadata = metadata)
+#plotloadings(p, drawConnectors = TRUE)
 ```
 
 ## Differential testing: multigroup
 
 ```{r, fig.width = 10, fig.height = 5}
-#dds <- DESeqDataSetFromMatrix(countData = counts_raw, colData = metadata,
-  #design = ~Sample_group)
-#dds <- DESeq(dds)
-
-#dds_lrt <- DESeq(dds, test="LRT", reduced = ~ 1)
+dds_lrt <- DESeq(dds_dataset, test="LRT", reduced = ~ 1)
 
 res_lrt <- results(dds_lrt) %>% 
   as.data.frame() %>%
   tibble::rownames_to_column(var="gene_id") %>% 
   as_tibble()%>%
   arrange(padj)
-  
 
 intercept_genes_sig <- res_lrt %>% 
   dplyr::filter(padj < 0.05) %>%
@@ -309,8 +130,40 @@ groups_intercept <- clusters_intercept$df
 write.csv(groups_intercept, "GSE97356/clusters.csv")
 ```
 
+# DE
 
-## Visualizations
+```{r}
+pacman::p_load("ashr")
+
+contrast_cn <- c("Sample_group", "current", "never")
+res_ashr_cn <- results(dds, contrast = contrast_cn)
+res_shrink_cn <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "current", "never"))
+
+res_sig_ashr_cn <- res_ashr_cn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, abs(log2FoldChange) > 0.27)
+#res_shrink_sig_cn <- res_shrink_cn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, abs(log2FoldChange) > 0.27)
+
+#hist(res_ashr_cn$log2FoldChange, 100)
+
+contrast_pn <- c("Sample_group", "past", "never")
+res_ashr_pn <- results(dds, contrast = contrast_pn)
+#res_shrink_pn <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "current", "never"))
+
+res_sig_ashr_pn <- res_ashr_pn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, abs(log2FoldChange) > 0.27)
+#res_shrink_sig_pn <- res_shrink_pn %>% as.data.frame() %>% dplyr::filter(padj < 0.05, abs(log2FoldChange) > 0.27)
+
+#hist(res_ashr_pn$log2FoldChange, 100)
+
+contrast_cp <- c("Sample_group", "past", "never")
+res_ashr_cp <- results(dds, contrast = contrast_cp)
+#res_shrink_cp <- lfcShrink(dds, type="ashr", contrast = c("Sample_group", "current", "never"))
+
+res_sig_ashr_cp <- res_ashr_cp %>% as.data.frame() %>% dplyr::filter(padj < 0.05, abs(log2FoldChange) > 0.27)
+#res_shrink_sig_cp <- res_shrink_cp %>% as.data.frame() %>% dplyr::filter(padj < 0.05, abs(log2FoldChange) > 0.27)
+
+#hist(res_ashr_cp$log2FoldChange, 100)
+```
+
+## Volcano plots
 
 ```{r, fig.width = 10, fig.height = 7}
 #BiocManager::install("EnhancedVolcano")
@@ -344,7 +197,7 @@ EnhancedVolcano(volcano_cp,
                 lab = rownames(volcano_cp),
                 x = "log2FoldChange",
                 y = "padj",
-                title = 'Volcano plot past/never',
+                title = 'Volcano plot current/past',
                 pCutoff = 0.05,
                 FCcutoff = 0.27) + 
           ggplot2::coord_cartesian(xlim=c(-1, 1), ylim = c(0,3)) + 
@@ -354,26 +207,44 @@ EnhancedVolcano(volcano_cp,
 
 
 ```{r, fig.width = 10, fig.height = 7 }
+counts_csv <- "GSE97356/raw_counts.csv"
+counts_raw <- read.csv(counts_csv, row.names = 1)
+
+metadata_tsv <- "GSE97356/metadata.csv"
+metadata <- read.csv(metadata_tsv, row.names = 1)
+metadata <- t(metadata) %>% as.data.frame()
+
+res_sig_ashr_cn <- read.csv("GSE97356/res_sign_cn_ashr.csv", row.names = 1)
+
+dds_dataset <- DESeqDataSetFromMatrix(countData = counts_raw, 
+                              colData = metadata, 
+                              design = ~Sample_group)
+keep <- rowMeans(counts(dds_dataset)) >= 100
+dds_dataset <- dds_dataset[keep, ]
 
 metadata$Sample_group <- factor(metadata$Sample_group, levels = c("never", "current", "past"))
- metadata_sample_group <- metadata %>% dplyr::select(Sample_group)
+metadata <- metadata %>% as.data.frame() %>% arrange(Sample_group)
+metadata_sample_group <- metadata %>% dplyr::select(Sample_group) 
 
-#rld <- vst(dds_dataset, blind = TRUE)
-rld <- vst(dds, blind = TRUE)
-sig_gene_names <- c(rownames(res_sig_ashr_cn), "GRB10")
+rld <- vst(dds_dataset, blind = TRUE)
+#rld <- vst(dds, blind = TRUE)
+#sig_gene_names <- c(rownames(res_sig_ashr_cn), "GRB10")
+sig_gene_names <- rownames(res_sig_ashr_cn)
 counts_assay <- assay(rld) %>% as.data.frame()
 sig_counts <- counts_assay[rownames(counts_assay) %in% sig_gene_names, ]
+sig_counts <- sig_counts[,metadata_sample_group$Sample_group]
 
-#sig_counts_scaled <- t(scale(t(sig_counts)))
+sig_counts_scaled <- t(scale(t(sig_counts)))
+
 #counts_vst <- assay(rld) %>% as.data.frame()
 #matrix_correlations <- cor(counts_vst)
 
 pheatmap(
   #matrix_correlations,
-  sig_counts,
+  sig_counts_scaled,
   annotation = metadata_sample_group, 
   cluster_rows = TRUE, 
-  cluster_cols = FALSE, 
+  cluster_cols = FALSE,
   show_rownames = TRUE, 
   show_colnames = FALSE
   )
@@ -381,8 +252,6 @@ pheatmap(
 ```
 
 ```{r}
-write.csv(res_sign_cn, "GSE97356/res_sign_cn_1.csv")
-write.csv(res_sign_pn, "GSE97356/res_sign_pn_1.csv")
 write.csv(res_sig_ashr_cn, "GSE97356/res_sign_cn_ashr.csv")
 write.csv(res_sig_ashr_cp, "GSE97356/res_sign_cp_ashr.csv")
 write.csv(res_sig_ashr_pn, "GSE97356/res_sign_cp_ashr.csv")
@@ -476,7 +345,121 @@ for (gene in gene_names) {
 #conflicts_prefer(dplyr::combine)
 #grid.arrange(plot_list[1], plot_list[2])
 #GRB10
-
-     
 ```
 
+```{r}
+pacman::p_load("here", "clusterProfiler", "biomaRt", "stats", "dplyr", 
+               "enrichplot", "europepmc", "janitor", "org.Hs.eg.db")
+ensembl <- useMart('ensembl', dataset = 'hsapiens_gene_ensembl')
+
+genes_entrez <- getBM(filters = "external_gene_name",
+             attributes = c('hgnc_symbol', "external_gene_name", "entrezgene_id"),
+             values = rownames(res_shrink),
+             mart = ensembl)
+de_results <- res_shrink %>% 
+  mutate(ranking = (sign(log2FoldChange) * (-log10(pvalue)))) %>% 
+  arrange(desc(ranking)) %>% tibble::rownames_to_column("genes")
+
+de_results <- dplyr::left_join(de_results, genes_entrez, by = c("genes" = "external_gene_name"))
+
+de_results %>% janitor::get_dupes("entrezgene_id")
+
+de_results <- de_results %>%
+  tidyr::drop_na() %>%
+  dplyr::distinct(entrezgene_id, .keep_all = TRUE)
+
+
+genes_list <- de_results$ranking
+names(genes_list) <- de_results$entrezgene_id
+genes_list = sort(genes_list, decreasing = TRUE)
+
+gseGO_res_005 <- gseGO(geneList = genes_list,
+              OrgDb = org.Hs.eg.db,
+              ont = "BP",
+              pvalueCutoff = 0.05,
+              )
+gseGO_res_005_genename <- setReadable(gseGO_res_005, 'org.Hs.eg.db', 'ENTREZID')
+dotplot(gseGO_res_005, showCategory=20, x = "NES", color = "NES") + ggtitle("dotplot for GSEA 0.05")
+```
+```{r}
+## categorySize can be scaled by 'pvalue' or 'geneNum'
+p2 <- cnetplot(gseGO_res_005_genename, categorySize="pvalue", 
+               color.params = list(foldChange = genes_list))
+p2
+```
+
+```{r}
+p3 <- cnetplot(gseGO_res_005_genename, 
+               color.params = list(foldChange = genes_list), 
+               circular = TRUE, colorEdge = TRUE)
+p3
+```
+
+```{r}
+p4 <- cnetplot(gseGO_res_005_genename, node_label="category", 
+        cex_label_category = 1.2) 
+p4
+```
+
+```{r}
+p5 <- cnetplot(gseGO_res_005_genename, node_label="gene", 
+        cex_label_gene = 0.8) 
+p5
+```
+
+```{r}
+p6 <- cnetplot(gseGO_res_005_genename, node_label="all")
+p6
+```
+
+```{r}
+p7 <- cnetplot(gseGO_res_005_genename, node_label="none", 
+        color_category='firebrick', 
+        color_gene='steelblue') 
+p7
+```
+```{r}
+#res_sig_ashr_cn <- read.csv("GSE97356/res_sign_cn_ashr.csv", row.names = 1)
+de_res_sig <- res_sig_ashr_cn %>% 
+  mutate(ranking = (sign(log2FoldChange) * (-log10(pvalue)))) %>% 
+  arrange(desc(ranking)) %>% tibble::rownames_to_column("genes")
+
+de_res_sig <- dplyr::left_join(de_res_sig, genes_entrez, by = c("genes" = "external_gene_name"))
+
+de_res_sig %>% janitor::get_dupes("entrezgene_id")
+
+de_res_sig <- de_res_sig %>%
+  tidyr::drop_na() %>%
+  dplyr::distinct(entrezgene_id, .keep_all = TRUE)
+
+
+genes_list_sig <- de_res_sig$ranking
+names(genes_list_sig) <- de_res_sig$entrezgene_id
+genes_list_sig = sort(genes_list_sig, decreasing = TRUE)
+
+gseGO_res_sig <- gseGO(geneList = genes_list_sig,
+              OrgDb = org.Hs.eg.db,
+              ont = "BP",
+              pvalueCutoff = 0.05,
+              )
+gseGO_res_sig_genename <- setReadable(gseGO_res_sig, 'org.Hs.eg.db', 'ENTREZID')
+
+cnetplot(gseGO_res_sig_genename, node_label="category", 
+        cex_label_category = 1.2) 
+```
+
+```{r}
+cnetplot(gseWP_res_025_genename, node_label="gene", 
+        cex_label_gene = 0.8) 
+```
+
+```{r}
+cnetplot(gseWP_res_025_genename, node_label="all")
+```
+
+```{r}
+p7 <- cnetplot(gseWP_res_025_genename, node_label="none", 
+        color_category='firebrick', 
+        color_gene='steelblue') 
+p7
+```
